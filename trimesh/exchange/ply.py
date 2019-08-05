@@ -125,7 +125,7 @@ def export_ply(mesh,
     # custom numpy dtypes for exporting
     dtype_face = [('count', '<u1'),
                   ('index', '<i4', (3))]
-    dtype_vertex = [('vertex', '<f4', (3))]
+    dtype_vertex = [('vertex', '<f8', (3))]
     # will be appended to main dtype if needed
     dtype_vertex_normal = ('normals', '<f4', (3))
     dtype_color = ('rgba', '<u1', (4))
