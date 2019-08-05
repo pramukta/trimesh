@@ -12,13 +12,14 @@ from . import misc
 from .ply import _ply_loaders
 from .stl import _stl_loaders
 from .dae import _collada_loaders
+from .obj import _obj_loaders
 from .misc import _misc_loaders
 from .gltf import _gltf_loaders
 from .assimp import _assimp_loaders
 from .threemf import _three_loaders
 from .openctm import _ctm_loaders
-from .wavefront import _obj_loaders
 from .xml_based import _xml_loaders
+from .binvox import _binvox_loaders
 
 
 try:
@@ -35,7 +36,8 @@ except BaseException as E:
 
         Raises
         ----------
-        path_exception : Whatever failed when we imported path
+        path_exception : BaseException
+          Whatever failed when we imported path
         """
         raise _path_exception
 
@@ -78,18 +80,18 @@ def load(file_obj,
          resolver=None,
          **kwargs):
     """
-    Load a mesh or vectorized path into objects:
+    Load a mesh or vectorized path into objects like
     Trimesh, Path2D, Path3D, Scene
 
     Parameters
-    ---------
+    -----------
     file_obj : str, or file- like object
       The source of the data to be loadeded
     file_type: str
       What kind of file type do we have (eg: 'stl')
     resolver : trimesh.visual.Resolver
       Object to load referenced assets like materials and textures
-    kwargs : **
+    kwargs : dict
       Passed to geometry __init__
 
     Returns
@@ -138,6 +140,12 @@ def load(file_obj,
             loaded = load_compressed(file_obj,
                                      file_type=file_type,
                                      **kwargs)
+        elif file_type in voxel_loaders:
+            loaded = voxel_loaders[file_type](
+                file_obj,
+                file_type=file_type,
+                resolver=resolver,
+                **kwargs)
         else:
             if file_type in ['svg', 'dxf']:
                 # call the dummy function to raise the import error
@@ -386,7 +394,6 @@ def load_kwargs(*args, **kwargs):
             scene.graph.base_frame = kwargs['base_frame']
         if 'metadata' in kwargs:
             scene.metadata.update(kwargs['metadata'])
-
         return scene
 
     def handle_trimesh_kwargs():
@@ -418,21 +425,21 @@ def load_kwargs(*args, **kwargs):
             isinstance(args[0], dict)):
         kwargs = args[0]
 
-    # function : list of expected keys
-    handlers = {handle_scene: ('graph', 'geometry'),
-                handle_trimesh_kwargs: ('vertices', 'faces'),
-                handle_trimesh_export: ('file_type', 'data')}
+    # (function, tuple of expected keys)
+    handlers = (
+        (handle_scene, ('graph', 'geometry')),
+        (handle_trimesh_kwargs, ('vertices', 'faces')),
+        (handle_trimesh_export, ('file_type', 'data')),
+    )
 
     # loop through handler functions and expected key
-    handler = None
-    for func, expected in handlers.items():
+    for func, expected in handlers:
         if all(i in kwargs for i in expected):
             # all expected kwargs exist
             handler = func
             # exit the loop as we found one
             break
-
-    if handler is None:
+    else:
         raise ValueError('unable to determine type!')
 
     return handler()
@@ -579,3 +586,6 @@ mesh_loaders.update(_obj_loaders)
 mesh_loaders.update(_collada_loaders)
 mesh_loaders.update(_gltf_loaders)
 mesh_loaders.update(_three_loaders)
+
+voxel_loaders = {}
+voxel_loaders.update(_binvox_loaders)

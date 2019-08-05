@@ -8,12 +8,16 @@ Functions for grouping values and rows.
 import numpy as np
 
 from . import util
+
 from .constants import log, tol
 
 try:
     from scipy.spatial import cKDTree
-except ImportError:
-    log.warning('scipy unavailable')
+except BaseException as E:
+    # wrapping just ImportError fails in some cases
+    # will raise the error when someone tries to use KDtree
+    from . import exceptions
+    cKDTree = exceptions.closure(E)
 
 
 def merge_vertices(mesh,
@@ -48,7 +52,6 @@ def merge_vertices(mesh,
         mesh.visual.defined and
         mesh.visual.kind == 'texture' and
             mesh.visual.uv is not None):
-
         # get an array with vertices and UV coordinates
         # converted to integers at requested precision
         stacked = np.column_stack((
@@ -59,16 +62,6 @@ def merge_vertices(mesh,
         # because that can corrupt textures at seams.
         unique, inverse = unique_rows(stacked)
         mesh.update_vertices(unique, inverse)
-
-        # Now, smooth out the vertex normals at the duplicate vertices.
-        # For now, we just use the first vertex's normal in a duplicate group.
-        # It would be better to average these, but that's slower.
-        unique, inverse = unique_rows(mesh.vertices,
-                                      digits=digits)
-        try:
-            mesh.vertex_normals = mesh.vertex_normals[unique[inverse]]
-        except BaseException:
-            pass
 
     # In normal usage, just merge vertices that are close.
     else:
@@ -228,7 +221,7 @@ def float_to_int(data, digits=None, dtype=np.int32):
     elif isinstance(digits, float) or isinstance(digits, np.float):
         digits = util.decimal_to_digits(digits)
     elif not (isinstance(digits, int) or isinstance(digits, np.integer)):
-        log.warn('Digits were passed as %s!', digits.__class__.__name__)
+        log.warning('Digits were passed as %s!', digits.__class__.__name__)
         raise ValueError('Digits must be None, int, or float!')
 
     # data is float so convert to large integers
@@ -681,6 +674,7 @@ def clusters(points, radius):
 def blocks(data,
            min_len=2,
            max_len=np.inf,
+           wrap=False,
            digits=None,
            only_nonzero=False):
     """
@@ -689,15 +683,23 @@ def blocks(data,
 
     Parameters
     ---------
-    data:    (n) array
-    min_len: int, the minimum length group to be returned
-    max_len: int, the maximum length group to be retuurned
-    digits:  if dealing with floats, how many digits to use
-    only_nonzero: bool, only return blocks of non- zero values
+    data :  (n,) array
+      Data to find blocks on
+    min_len : int
+      The minimum length group to be returned
+    max_len : int
+      The maximum length group to be retuurned
+    wrap : bool
+      Combine blocks on both ends of 1D array
+    digits : None or int
+      If dealing with floats how many digits to consider
+    only_nonzero : bool
+      Only return blocks of non- zero values
 
     Returns
     ---------
-    blocks: (m) sequence of indices referencing data
+    blocks : (m) sequence of (*,) int
+      Indices referencing data
     """
     data = float_to_int(data, digits=digits)
 
@@ -711,20 +713,66 @@ def blocks(data,
                              infl_len <= max_len)
 
     if only_nonzero:
-        # check to make sure the values of each contiguous block are True,
-        # by checking the first value of each block
-        infl_ok = np.logical_and(infl_ok,
-                                 data[infl[:-1]])
+        # check to make sure the values of each contiguous block
+        # are True by checking the first value of each block
+        infl_ok = np.logical_and(
+            infl_ok, data[infl[:-1]])
 
     # inflate start/end indexes into full ranges of values
     blocks = [np.arange(infl[i], infl[i + 1])
               for i, ok in enumerate(infl_ok) if ok]
+
+    if wrap:
+        # wrap only matters if first and last points are the same
+        if data[0] != data[-1]:
+            return blocks
+        # if we are only grouping nonzero things and
+        # the first and last point are zero we can exit
+        if only_nonzero and not bool(data[0]):
+            return blocks
+
+        # so now first point equals last point, so the cases are:
+        # - first and last point are in a block: combine two blocks
+        # - first OR last point are in block: add other point to block
+        # - neither are in a block: check if combined is eligible block
+
+        # first point is in a block
+        first = len(blocks) > 0 and blocks[0][0] == 0
+        # last point is in a block
+        last = len(blocks) > 0 and blocks[-1][-1] == (len(data) - 1)
+
+        # CASE: first and last point are BOTH in block: combine blocks
+        if first and last:
+            blocks[0] = np.append(blocks[-1], blocks[0])
+            blocks.pop()
+        else:
+            # combined length
+            combined = infl_len[0] + infl_len[-1]
+            # exit if lengths aren't OK
+            if combined < min_len or combined > max_len:
+                return blocks
+            # new block combines both ends
+            new_block = np.append(np.arange(infl[-2], infl[-1]),
+                                  np.arange(infl[0], infl[1]))
+            # we are in a first OR last situation now
+            if first:
+                # first was already in a block so replace it with combined
+                blocks[0] = new_block
+            elif last:
+                # last was already in a block so replace with superset
+                blocks[-1] = new_block
+            else:
+                # both are false
+                # combined length generated new block
+                blocks.append(new_block)
+
     return blocks
 
 
 def group_min(groups, data):
     """
-    Given a list of groups, find the minimum element of data within each group
+    Given a list of groups find the minimum element of data
+    within each group
 
     Parameters
     -----------

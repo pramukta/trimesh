@@ -15,7 +15,6 @@ from . import util
 from . import units
 from . import poses
 from . import graph
-from . import voxel
 from . import sample
 from . import repair
 from . import convex
@@ -69,7 +68,7 @@ class Trimesh(Geometry):
         A Trimesh object contains a triangular 3D mesh.
 
         Parameters
-        ----------
+        ------------
         vertices : (n, 3) float
           Array of vertex locations
         faces : (m, 3) or (m, 4) int
@@ -171,6 +170,9 @@ class Trimesh(Geometry):
         # update the mesh metadata with passed metadata
         if isinstance(metadata, dict):
             self.metadata.update(metadata)
+        elif metadata is not None:
+            raise ValueError(
+                'metadata should be a dict or None, got %s' % str(metadata))
 
         # Set the default center of mass and density
         self._density = 1.0
@@ -227,7 +229,7 @@ class Trimesh(Geometry):
             if self._validate:
                 self.remove_duplicate_faces()
                 self.remove_degenerate_faces()
-        # since none of our process operations moved vertices or faces,
+        # since none of our process operations moved vertices or faces
         # we can keep face and vertex normals in the cache without recomputing
         # if faces or vertices have been removed, normals are validated before
         # being returned so there is no danger of inconsistent dimensions
@@ -241,9 +243,10 @@ class Trimesh(Geometry):
         An MD5 of the core geometry information for the mesh,
         faces and vertices.
 
-        Generated from TrackedArray, which subclasses np.ndarray to monitor for
-        changes and returns a correct, but lazily evaluated md5 so it only has to
-        recalculate the hash occasionally, rather than on every call.
+        Generated from TrackedArray which subclasses np.ndarray to
+        monitor array for changes and returns a correct lazily
+        evaluated md5 so it only has to recalculate the hash
+        occasionally, rather than on every call.
 
         Returns
         ----------
@@ -318,7 +321,7 @@ class Trimesh(Geometry):
           shape : (len(self.vertices), len(self.faces))
         """
         sparse = geometry.index_sparse(
-            column_count=len(self.vertices),
+            columns=len(self.vertices),
             indices=self.faces)
         return sparse
 
@@ -453,11 +456,11 @@ class Trimesh(Geometry):
         """
         # make sure we have faces_sparse
         assert hasattr(self.faces_sparse, 'dot')
-        vertex_normals = geometry.mean_vertex_normals(
+        vertex_normals = geometry.weighted_vertex_normals(
             vertex_count=len(self.vertices),
             faces=self.faces,
             face_normals=self.face_normals,
-            sparse=self.faces_sparse)
+            face_angles=self.face_angles)
         return vertex_normals
 
     @caching.cache_decorator
@@ -477,8 +480,7 @@ class Trimesh(Geometry):
         vertex_faces = geometry.vertex_face_indices(
             vertex_count=len(self.vertices),
             faces=self.faces,
-            sparse=self.faces_sparse
-        )
+            sparse=self.faces_sparse)
         return vertex_faces
 
     @vertex_normals.setter
@@ -704,7 +706,7 @@ class Trimesh(Geometry):
         Returns
         ----------
         transform : (4, 4) float
-          Homogenous transformation matrix
+          Homogeneous transformation matrix
         """
         order = np.argsort(self.principal_inertia_components)[1:][::-1]
         vectors = self.principal_inertia_vectors[order]
@@ -1035,7 +1037,7 @@ class Trimesh(Geometry):
         Convert the units of the mesh into a specified unit.
 
         Parameters
-        ----------
+        ------------
         desired : string
           Units to convert to (eg 'inches')
         guess : boolean
@@ -1068,7 +1070,7 @@ class Trimesh(Geometry):
         Update vertices with a mask.
 
         Parameters
-        ----------
+        ------------
         vertex_mask : (len(self.vertices)) bool
           Array of which vertices to keep
         inverse : (len(self.vertices)) int
@@ -1137,7 +1139,7 @@ class Trimesh(Geometry):
         as well as keeping track of normals and colors.
 
         Parameters
-        ---------
+        ------------
         valid : (m) int or (len(self.faces)) bool
           Mask to remove faces
         """
@@ -1231,7 +1233,7 @@ class Trimesh(Geometry):
         Splits into individual components, sometimes referred to as 'bodies'
 
         Parameters
-        ---------
+        ------------
         only_watertight : bool
           Only return watertight meshes and discard remainder
         adjacency : None or (n, 2) int
@@ -1566,9 +1568,11 @@ class Trimesh(Geometry):
         nondegenerate : (len(self.faces),) bool
           Mask used to remove faces
         """
-        nondegenerate = triangles.nondegenerate(self.triangles,
-                                                areas=self.area_faces,
-                                                height=height)
+        nondegenerate = triangles.nondegenerate(
+            self.triangles,
+            areas=self.area_faces,
+
+            height=height)
         self.update_faces(nondegenerate)
 
         return nondegenerate
@@ -1772,17 +1776,17 @@ class Trimesh(Geometry):
         This method samples the location of the center of mass from a multivariate
         gaussian (mean at com, cov equal to identity times sigma) over n_samples.
         For each sample, it computes the stable resting poses of the mesh on a
-        a planar workspace and evaulates the probabilities of landing in
+        a planar workspace and evaluates the probabilities of landing in
         each pose if the object is dropped onto the table randomly.
 
-        This method returns the 4x4 homogenous transform matrices that place
+        This method returns the 4x4 homogeneous transform matrices that place
         the shape against the planar surface with the z-axis pointing upwards
         and a list of the probabilities for each pose.
         The transforms and probabilties that are returned are sorted, with the
         most probable pose first.
 
         Parameters
-        ----------
+        ------------
         center_mass : (3,) float
           The object center of mass (if None, this method
           assumes uniform density and watertightness and
@@ -1799,7 +1803,7 @@ class Trimesh(Geometry):
         Returns
         -------
         transforms : (n, 4, 4) float
-          The homogenous matrices that transform the
+          The homogeneous matrices that transform the
           object to rest in a stable pose, with the
           new z-axis pointing upwards from the table
           and the object just touching the table.
@@ -1819,7 +1823,7 @@ class Trimesh(Geometry):
         smaller faces.
 
         Parameters
-        ----------
+        ------------
         face_index: (m,) int or None
           If None all faces of mesh will be subdivided
           If (m,) int array of indices: only specified faces will be
@@ -1899,7 +1903,7 @@ class Trimesh(Geometry):
         defined by origin and normal.
 
         Parameters
-        ---------
+        ------------
         plane_normal: (3) vector for plane normal
           Normal vector of section plane
         plane_origin : (3,) float
@@ -1941,7 +1945,7 @@ class Trimesh(Geometry):
         mesh in 2D.
 
         Parameters
-        ---------
+        ------------
         plane_normal: (3) vector for plane normal
           Normal vector of section plane
         plane_origin : (3,) float
@@ -1985,7 +1989,7 @@ class Trimesh(Geometry):
         sliced by the plane defined by origin and normal.
 
         Parameters
-        ---------
+        ------------
         plane_normal: (3) vector for plane normal
           Normal vector of slicing plane
         plane_origin : (3,) float
@@ -2026,7 +2030,7 @@ class Trimesh(Geometry):
         surface of the mesh
 
         Parameters
-        ---------
+        ------------
         count : int
           Number of points to sample
         return_index : bool
@@ -2095,31 +2099,31 @@ class Trimesh(Geometry):
 
     def apply_transform(self, matrix):
         """
-        Transform mesh by a homogenous transformation matrix.
+        Transform mesh by a homogeneous transformation matrix.
 
         Does the bookkeeping to avoid recomputing things so this function
         should be used rather than directly modifying self.vertices
         if possible.
 
         Parameters
-        ----------
+        ------------
         matrix : (4, 4) float
-          Homogenous transformation matrix
+          Homogeneous transformation matrix
         """
         # get c-order float64 matrix
         matrix = np.asanyarray(matrix,
                                order='C',
                                dtype=np.float64)
 
-        # only support homogenous transformations
+        # only support homogeneous transformations
         if matrix.shape != (4, 4):
             raise ValueError('Transformation matrix must be (4,4)!')
 
         # exit early if we've been passed an identity matrix
         # np.allclose is surprisingly slow so do this test
-        elif np.abs(matrix - np.eye(4)).max() < 1e-8:
-            log.debug('apply_tranform passed identity matrix')
-            return
+        elif util.allclose(matrix, np.eye(4), 1e-8):
+            log.debug('apply_transform passed identity matrix')
+            return self
 
         # new vertex positions
         new_vertices = transformations.transform_points(
@@ -2208,25 +2212,26 @@ class Trimesh(Geometry):
         log.debug('mesh transformed by matrix')
         return self
 
-    def voxelized(self, pitch, **kwargs):
+    def voxelized(self, pitch, method='subdivide', **kwargs):
         """
-        Return a Voxel object representing the current mesh
+        Return a VoxelGrid object representing the current mesh
         discretized into voxels at the specified pitch
 
         Parameters
-        ----------
+        ------------
         pitch : float
           The edge length of a single voxel
+        method: implementation key. See `trimesh.voxel.creation.voxelizers`
+        **kwargs: additional kwargs passed to the specified implementation.
 
         Returns
         ----------
-        voxelized : Voxel object
+        voxelized : VoxelGrid object
           Representing the current mesh
         """
-        voxelized = voxel.VoxelMesh(self,
-                                    pitch=pitch,
-                                    **kwargs)
-        return voxelized
+        from .voxel import creation
+        return creation.voxelize(
+            mesh=self, pitch=pitch, method=method, **kwargs)
 
     def outline(self, face_ids=None, **kwargs):
         """
@@ -2240,7 +2245,7 @@ class Trimesh(Geometry):
         outline of a watertight mesh is an empty path.
 
         Parameters
-        ----------
+        ------------
         face_ids : (n,) int
           Indices to compute the outline of.
           If None, outline of full mesh will be computed.
@@ -2369,7 +2374,7 @@ class Trimesh(Geometry):
         Render the mesh in an opengl window. Requires pyglet.
 
         Parameters
-        -----------
+        ------------
         smooth : bool
           Run smooth shading on mesh or not,
           large meshes will be slow
@@ -2387,7 +2392,7 @@ class Trimesh(Geometry):
         Return a subset of the mesh.
 
         Parameters
-        ----------
+        ------------
         faces_sequence : sequence (m,) int
           Face indices of mesh
         only_watertight : bool
@@ -2442,7 +2447,7 @@ class Trimesh(Geometry):
         dict64, msgpack.
 
         Parameters
-        ---------
+        ------------
         file_obj: open writeable file object
           str, file name where to save the mesh
           None, if you would like this function to return the export blob
@@ -2498,7 +2503,7 @@ class Trimesh(Geometry):
 
 
         Parameters
-        ----------
+        ------------
         maxhulls :  int
           Maximum number of convex hulls to return
         **kwargs :  testVHACD keyword arguments
@@ -2518,7 +2523,7 @@ class Trimesh(Geometry):
         Boolean union between this mesh and n other meshes
 
         Parameters
-        ---------
+        ------------
         other : trimesh.Trimesh, or list of trimesh.Trimesh objects
           Other meshes to union
 
@@ -2536,7 +2541,7 @@ class Trimesh(Geometry):
         Boolean difference between this mesh and n other meshes
 
         Parameters
-        ---------
+        ------------
         other : trimesh.Trimesh, or list of trimesh.Trimesh objects
          Meshes to difference
 
@@ -2554,7 +2559,7 @@ class Trimesh(Geometry):
         Boolean intersection between this mesh and n other meshes
 
         Parameters
-        ---------
+        ------------
         other : trimesh.Trimesh, or list of trimesh.Trimesh objects
           Meshes to calculate intersections with
 
@@ -2573,7 +2578,7 @@ class Trimesh(Geometry):
         This raises an error if called on a non- watertight mesh.
 
         Parameters
-        ---------
+        ------------
         points : (n, 3) float
           Points in cartesian space
 
@@ -2634,6 +2639,22 @@ class Trimesh(Geometry):
         return defects
 
     @caching.cache_decorator
+    def vertex_degree(self):
+        """
+        Return the number of faces each vertex is included in.
+
+        Returns
+        ----------
+        degree : (len(self.vertices), ) int
+          Number of faces each vertex is included in
+        """
+        # get degree through sparse matrix
+        degree = np.array(self.faces_sparse.sum(axis=1)).flatten()
+        # don't allow property to be modified
+        degree.flags['WRITEABLE'] = False
+        return degree
+
+    @caching.cache_decorator
     def face_adjacency_tree(self):
         """
         An R-tree of face adjacencies.
@@ -2691,7 +2712,7 @@ class Trimesh(Geometry):
         Statements are evaluated inside the Trimesh object, and
 
         Parameters
-        -----------
+        ------------
         statement : str
           Statement of valid python code
         *args : list

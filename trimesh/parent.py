@@ -5,16 +5,11 @@ parent.py
 The base class for Trimesh, PointCloud, and Scene objects
 """
 import abc
-import sys
 
 import numpy as np
 
 from . import caching
-
-if sys.version_info >= (3, 4):
-    ABC = abc.ABC
-else:
-    ABC = abc.ABCMeta('ABC', (), {})
+from .util import ABC
 
 
 class Geometry(ABC):
@@ -37,7 +32,7 @@ class Geometry(ABC):
         pass
 
     @abc.abstractmethod
-    def apply_transform(self):
+    def apply_transform(self, matrix):
         pass
 
     @abc.abstractmethod
@@ -59,7 +54,7 @@ class Geometry(ABC):
 
         matrix = np.eye(4)
         matrix[:3, 3] = translation
-        self.apply_transform(matrix)
+        return self.apply_transform(matrix)
 
     def apply_scale(self, scaling):
         """
@@ -77,7 +72,7 @@ class Geometry(ABC):
         matrix = np.eye(4)
         matrix[:3, :3] *= scaling
         # apply_transform will work nicely even on negative scales
-        self.apply_transform(matrix)
+        return self.apply_transform(matrix)
 
     @abc.abstractmethod
     def copy(self):
@@ -139,7 +134,7 @@ class Geometry(ABC):
 
         Returns
         --------
-        minball: trimesh.primitives.Sphere
+        minball : trimesh.primitives.Sphere
           Sphere primitive containing current mesh
         """
         from . import primitives, nsphere
@@ -172,10 +167,11 @@ class Geometry(ABC):
 
         Returns
         ---------
-        bounding_primitive : trimesh.primitives.Sphere
-                             trimesh.primitives.Box
-                             trimesh.primitives.Cylinder
-          Primitive which bounds the mesh with the smallest volume
+        bounding_primitive : object
+          Smallest primitive which bounds the mesh:
+          trimesh.primitives.Sphere
+          trimesh.primitives.Box
+          trimesh.primitives.Cylinder
         """
         options = [self.bounding_box_oriented,
                    self.bounding_sphere,

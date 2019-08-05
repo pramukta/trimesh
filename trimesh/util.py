@@ -11,6 +11,8 @@ or imported inside of a function
 
 import numpy as np
 
+import abc
+import collections
 import time
 import copy
 import json
@@ -18,12 +20,18 @@ import base64
 import logging
 import hashlib
 import zipfile
-import collections
+import sys
+import tempfile
+import shutil
 
-from sys import version_info
+
+if sys.version_info >= (3, 4):
+    ABC = abc.ABC
+else:
+    ABC = abc.ABCMeta('ABC', (), {})
 
 # a flag we can check elsewhere for Python 3
-PY3 = version_info.major >= 3
+PY3 = sys.version_info.major >= 3
 if PY3:
     # for type checking
     basestring = str
@@ -56,7 +64,7 @@ def unitize(vectors,
     Unitize a vector or an array or row- vectors.
 
     Parameters
-    ---------
+    ------------
     vectors : (n,m) or (j) float
        Vector or vectors to be unitized
     check_valid :  bool
@@ -222,7 +230,7 @@ def is_sequence(obj):
     return seq
 
 
-def is_shape(obj, shape):
+def is_shape(obj, shape, allow_zeros=False):
     """
     Compare the shape of a numpy.ndarray to a target shape,
     with any value less than zero being considered a wildcard
@@ -231,12 +239,14 @@ def is_shape(obj, shape):
     array, this function will not convert it and will return False.
 
     Parameters
-    ---------
+    ------------
     obj :   np.ndarray
        Array to check the shape on
     shape : list or tuple
        Any negative term will be considered a wildcard
        Any tuple term will be evaluated as an OR
+    allow_zeros: bool
+        if False, zeros do not math negatives in shape.
 
     Returns
     ---------
@@ -286,7 +296,7 @@ def is_shape(obj, shape):
 
         # check if current field is a wildcard
         if target < 0:
-            if i == 0:
+            if i == 0 and not allow_zeros:
                 # if a dimension is 0, we don't allow
                 # that to match to a wildcard
                 # it would have to be explicitly called out as 0
@@ -312,7 +322,7 @@ def make_sequence(obj):
     objects and other times return lists of objects.
 
     Parameters
-    --------------
+    -------------
     obj : object
       An object to be made a sequence
 
@@ -339,7 +349,7 @@ def vector_hemisphere(vectors, return_sign=False):
     negative X value will be reversed.
 
     Parameters
-    ----------
+    ------------
     vectors : (n,3) float
       Input vectors
     return_sign : bool
@@ -438,7 +448,7 @@ def spherical_to_vector(spherical):
     Convert a set of (n,2) spherical vectors to (n,3) vectors
 
     Parameters
-    -----------
+    ------------
     spherical : (n , 2) float
        Angles, in radians
 
@@ -465,7 +475,7 @@ def pairwise(iterable):
     For an iterable, group values into pairs.
 
     Parameters
-    -----------
+    ------------
     iterable : (m, ) list
        A sequence of values
 
@@ -501,11 +511,11 @@ def pairwise(iterable):
 
 
 try:
-    # prefer the faster numpy version
+    # prefer the faster numpy version of multi_dot
     # only included in recent- ish version of numpy
     multi_dot = np.linalg.multi_dot
 except AttributeError:
-    log.warning('np.linalg.multi_dot not available, falling back')
+    log.warning('np.linalg.multi_dot not available, using fallback')
 
     def multi_dot(arrays):
         """
@@ -514,7 +524,7 @@ except AttributeError:
         provided for backwards compatibility with ancient versions of numpy.
         """
         arrays = np.asanyarray(arrays)
-        result = arrays[0]
+        result = arrays[0].copy()
         for i in arrays[1:]:
             result = np.dot(result, i)
         return result
@@ -607,7 +617,7 @@ def stack_3D(points, return_2D=False):
     as (n, 3) 3D points, 2D points on the XY plane.
 
     Parameters
-    ----------
+    ------------
     points :  (n, 2) or (n, 3) float
       Points in either 2D or 3D space
     return_2D : bool
@@ -647,12 +657,12 @@ def grid_arange(bounds, step):
     Return a grid from an (2,dimension) bounds with samples step distance apart.
 
     Parameters
-    ---------
+    ------------
     bounds: (2,dimension) list of [[min x, min y, etc], [max x, max y, etc]]
     step:   float, or (dimension) floats, separation between points
 
     Returns
-    -------
+    ---------
     grid: (n, dimension), points inside the specified bounds
     """
     bounds = np.asanyarray(bounds, dtype=np.float64)
@@ -665,7 +675,7 @@ def grid_arange(bounds, step):
         step = np.tile(step, bounds.shape[1])
 
     grid_elements = [np.arange(*b, step=s) for b, s in zip(bounds.T, step)]
-    grid = np.vstack(np.meshgrid(*grid_elements)
+    grid = np.vstack(np.meshgrid(*grid_elements, indexing='ij')
                      ).reshape(bounds.shape[1], -1).T
     return grid
 
@@ -675,12 +685,12 @@ def grid_linspace(bounds, count):
     Return a grid spaced inside a bounding box with edges spaced using np.linspace.
 
     Parameters
-    ---------
+    ------------
     bounds: (2,dimension) list of [[min x, min y, etc], [max x, max y, etc]]
     count:  int, or (dimension,) int, number of samples per side
 
     Returns
-    -------
+    ---------
     grid: (n, dimension) float, points in the specified bounds
     """
     bounds = np.asanyarray(bounds, dtype=np.float64)
@@ -692,7 +702,7 @@ def grid_linspace(bounds, count):
         count = np.tile(count, bounds.shape[1])
 
     grid_elements = [np.linspace(*b, num=c) for b, c in zip(bounds.T, count)]
-    grid = np.vstack(np.meshgrid(*grid_elements)
+    grid = np.vstack(np.meshgrid(*grid_elements, indexing='ij')
                      ).reshape(bounds.shape[1], -1).T
     return grid
 
@@ -705,7 +715,7 @@ def multi_dict(pairs):
     Can be called like the regular dict(pairs) constructor
 
     Parameters
-    ----------
+    ------------
     pairs: (n,2) array of key, value pairs
 
     Returns
@@ -725,12 +735,12 @@ def tolist(data):
     numpy arrays are properly converted to lists
 
     Parameters
-    -----------------
+    -------------
     data : any
       Usually a dict with some numpy arrays as values
 
     Returns
-    ------------
+    ----------
     result : any
       JSON- serializable version of data
     """
@@ -762,7 +772,7 @@ def distance_to_end(file_obj):
     For an open file object how far is it to the end
 
     Parameters
-    ----------
+    ------------
     file_obj: open file- like object
 
     Returns
@@ -803,7 +813,7 @@ def hash_file(file_obj,
     Get the hash of an open file- like object.
 
     Parameters
-    ---------
+    ------------
     file_obj: file like object
     hash_function: function to use to hash data
 
@@ -831,7 +841,7 @@ def md5_object(obj):
     If an object is hashable, return the string of the MD5.
 
     Parameters
-    -----------
+    ------------
     obj: object
 
     Returns
@@ -936,7 +946,7 @@ def stack_lines(indices):
     individual line segments with duplicated consecutive values.
 
     Parameters
-    ----------
+    ------------
     indices: sequence of items
 
     Returns
@@ -1024,7 +1034,7 @@ def array_to_string(array,
     basic numpy array to string conversions are surprisingly bad.
 
     Parameters
-    ----------
+    ------------
     array : (n,) or (n, d) float or int
        Data to be converted
        If shape is (n,) only column delimiter will be used
@@ -1140,7 +1150,7 @@ def decode_keys(store, encoding='utf-8'):
     If a dictionary has keys that are bytes decode them to a str.
 
     Parameters
-    ---------
+    ------------
     store : dict
       Dictionary with data
 
@@ -1213,7 +1223,7 @@ def is_instance_named(obj, name):
     or a subclass of 'name', return True.
 
     Parameters
-    ---------
+    ------------
     obj : instance
       Some object of some class
     name: str
@@ -1253,7 +1263,7 @@ def type_named(obj, name):
     for named instance.
 
     Parameters
-    ----------
+    ------------
     obj: object to look for class of
     name : str, name of class
 
@@ -1276,7 +1286,7 @@ def concatenate(a, b=None):
     Concatenate two or more meshes.
 
     Parameters
-    ----------
+    ------------
     a: Trimesh object, or list of such
     b: Trimesh object, or list of such
 
@@ -1326,7 +1336,7 @@ def submesh(mesh,
     Return a subset of a mesh.
 
     Parameters
-    ----------
+    ------------
     mesh : Trimesh
        Source mesh to take geometry from
     faces_sequence : sequence (p,) int
@@ -1430,14 +1440,14 @@ def submesh(mesh,
 def zero_pad(data, count, right=True):
     """
     Parameters
-    --------
+    ------------
     data : (n,)
       1D array
     count : int
       Minimum length of result array
 
     Returns
-    --------
+    ---------
     padded : (m,)
       1D array where m >= count
     """
@@ -1488,12 +1498,12 @@ def convert_like(item, like):
     Convert an item to have the dtype of another item
 
     Parameters
-    ----------
+    ------------
     item: item to be converted
     like: object with target dtype. If None, item is returned unmodified
 
     Returns
-    --------
+    ----------
     result: item, but in dtype of like
     """
     if isinstance(like, np.ndarray):
@@ -1517,7 +1527,7 @@ def bounds_tree(bounds):
     collision detection
 
     Parameters
-    ---------
+    ------------
     bounds: (n, dimension*2) list of non- interleaved bounds
              for a 2D bounds tree:
              [(minx, miny, maxx, maxy), ...]
@@ -1545,7 +1555,7 @@ def bounds_tree(bounds):
 
     properties = rtree.index.Property(dimension=dimension)
     if rtree_stream_ok:
-        # stream load was verified working on inport above
+        # stream load was verified working on import above
         tree = rtree.index.Index(zip(np.arange(len(bounds)),
                                      bounds,
                                      [None] * len(bounds)),
@@ -1564,7 +1574,7 @@ def wrap_as_stream(item):
     Wrap a string or bytes object as a file object.
 
     Parameters
-    ----------
+    ------------
     item: str or bytes
       Item to be wrapped
 
@@ -1586,7 +1596,7 @@ def sigfig_round(values, sigfig=1):
     Round a single value to a specified number of significant figures.
 
     Parameters
-    ----------
+    ------------
     values: float, value to be rounded
     sigfig: int, number of significant figures to reduce to
 
@@ -1652,7 +1662,7 @@ def decompress(file_obj, file_type):
     of the archive as open file objects in a dict.
 
     Parameters
-    -----------
+    ------------
     file_obj : file-like
       Containing compressed data
     file_type : str
@@ -1728,7 +1738,7 @@ def split_extension(file_name, special=['tar.bz2', 'tar.gz']):
     special case multipart file extensions (like .tar.gz)
 
     Parameters
-    ----------
+    ------------
     file_name: str, file name
     special:   list of str, multipart extensions
                eg: ['tar.bz2', 'tar.gz']
@@ -1901,12 +1911,12 @@ def generate_basis(z):
     from a given z-axis vector.
 
     Parameters
-    ----------
+    ------------
     z: (3,) float
       A vector along the positive z-axis
 
     Returns
-    -------
+    ---------
     x : (3,) float
       Vector along x axis
     y : (3,) float
@@ -1949,7 +1959,7 @@ def isclose(a, b, atol):
     a and b MUST be np.ndarray, not list or "array-like"
 
     Parameters
-    ----------
+    ------------
     a : np.ndarray
       To be compared
     b : np.ndarray
@@ -1965,3 +1975,120 @@ def isclose(a, b, atol):
     diff = a - b
     close = np.logical_and(diff > -atol, diff < atol)
     return close
+
+
+def allclose(a, b, atol):
+    """
+    A replacement for np.allclose that does few checks
+    and validation and as a result is faster.
+
+        Note that this is used in tight loops, and as such
+    a and b MUST be np.ndarray, not list or "array-like"
+
+    Parameters
+    ------------
+    a : np.ndarray
+      To be compared
+    b : np.ndarray
+      To be compared
+    atol : float
+      Acceptable distance between `a` and `b` to be "close"
+
+    Returns
+    -----------
+    bool indicating if all elements are within `atol`.
+    """
+    return np.all(np.abs(a - b).max() < atol)
+
+
+class FunctionRegistry(collections.Mapping):
+    """
+    Non-overwritable mapping of string keys to functions.
+
+    This allows external packages to register additional implementations
+    of common functionality without risk of breaking implementations provided
+    by trimesh.
+
+    See trimesh.voxel.morphology for example usage.
+    """
+
+    def __init__(self, **kwargs):
+        self._dict = {}
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def __getitem__(self, key):
+        return self._dict[key]
+
+    def __setitem__(self, key, value):
+        if not isinstance(key, str):
+            raise ValueError('key must be a string, got %s' % str(key))
+        if key in self:
+            raise KeyError('Cannot set new value to existing key %s' % key)
+        if not callable(value):
+            raise ValueError('Cannot set value which is not callable.')
+        self._dict[key] = value
+
+    def __iter__(self):
+        return iter(self._dict)
+
+    def __len__(self):
+        return len(self._dict)
+
+    def __contains__(self, key):
+        return key in self._dict
+
+    def __call__(self, key, *args, **kwargs):
+        return self[key](*args, **kwargs)
+
+
+class TemporaryDirectory(object):
+    """
+    Same basic usage as tempfile.TemporaryDirectory
+    but functional in Python 2.7+
+    """
+
+    def __enter__(self):
+        self.path = tempfile.mkdtemp()
+        return self.path
+
+    def __exit__(self, *args, **kwargs):
+        shutil.rmtree(self.path)
+
+
+def decode_text(text):
+    """
+    Try to decode byte input as a string.
+
+    Initially guesses that text is UTF-8, and then if
+    that fails it tries to detect the encoding and
+    try once more.
+
+    Parameters
+    ------------
+    text : bytes
+      Data that might be strings
+
+    Returns
+    ------------
+    decoded : str
+      Data as a string
+    """
+    # if not bytes just return input
+    if not hasattr(text, 'decode'):
+        return text
+
+    try:
+        # initially guess file is UTF-8
+        text = text.decode('utf-8')
+    except UnicodeDecodeError:
+        # detect different file encodings
+        import chardet
+        # try to detect the encoding of the file
+        detect = chardet.detect(text)
+        # warn on files that aren't UTF-8
+        log.warning('data not UTF-8, possibly: {} confidence {}'.format(
+            detect['encoding'], detect['confidence']))
+        # try to decode again, unwrapped in try
+        text = text.decode(detect['encoding'])
+    return text

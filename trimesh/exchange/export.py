@@ -4,9 +4,9 @@ import json
 from ..constants import log
 from .. import util
 
-from .wavefront import _obj_exporters
 from .urdf import export_urdf  # NOQA
 from .gltf import export_glb
+from .obj import _obj_exporters
 from .stl import export_stl, export_stl_ascii
 from .ply import _ply_exporters
 from .dae import _collada_exporters
@@ -17,7 +17,7 @@ def export_mesh(mesh, file_obj, file_type=None, **kwargs):
     Export a Trimesh object to a file- like object, or to a filename
 
     Parameters
-    ---------
+    -----------
     file_obj : str, file-like
       Where should mesh be exported to
     file_type : str or None
@@ -117,7 +117,8 @@ def export_dict(mesh, encoding=None):
 
     Returns
     -------------
-
+    export : dict
+      Data stored in dict
     """
 
     def encode(item, dtype=None):

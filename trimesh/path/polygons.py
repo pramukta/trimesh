@@ -1,5 +1,4 @@
 import numpy as np
-import networkx as nx
 
 from shapely.geometry import Polygon
 from shapely import vectorized
@@ -16,6 +15,14 @@ from ..constants import log
 from ..transformations import transform_points
 
 from .traversal import resample_path
+
+try:
+    import networkx as nx
+except BaseException as E:
+    # create a dummy module which will raise the ImportError
+    # or other exception only when someone tries to use networkx
+    from ..exceptions import ExceptionModule
+    nx = ExceptionModule(E)
 
 
 def enclosure_tree(polygons):
@@ -181,14 +188,14 @@ def polygon_obb(polygon):
 
 def transform_polygon(polygon, matrix):
     """
-    Transform a polygon by a a 2D homogenous transform.
+    Transform a polygon by a a 2D homogeneous transform.
 
     Parameters
     -------------
     polygon : shapely.geometry.Polygon
                  2D polygon to be transformed.
     matrix  : (3, 3) float
-                 2D homogenous transformation.
+                 2D homogeneous transformation.
 
     Returns
     --------------
@@ -542,9 +549,9 @@ def repair_invalid(polygon, scale=None, rtol=.5):
         return basic
 
     if scale is None:
-        distance = tol.buffer * polygon_scale(polygon)
+        distance = 0.002 * polygon_scale(polygon)
     else:
-        distance = tol.buffer * scale
+        distance = 0.002 * scale
 
     # if there are no interiors, we can work with just the exterior
     # ring, which is often more reliable
@@ -560,6 +567,21 @@ def repair_invalid(polygon, scale=None, rtol=.5):
                                              polygon.length,
                                              rtol=rtol):
                 return recon
+
+        # try de-deuplicating the outside ring
+        points = np.array(polygon.exterior)
+        # remove any segments shorter than tol.merge
+        # this is a little risky as if it was discretized more
+        # finely than 1-e8 it may remove detail
+        unique = np.append(True, (np.diff(points, axis=0)**2).sum(
+            axis=1)**.5 > 1e-8)
+        # make a new polygon with result
+        dedupe = Polygon(shell=points[unique])
+        # check result
+        if dedupe.is_valid and np.isclose(dedupe.length,
+                                          polygon.length,
+                                          rtol=rtol):
+            return dedupe
 
     # buffer and unbuffer the whole polygon
     buffered = polygon.buffer(distance).buffer(-distance)
